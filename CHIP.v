@@ -37,8 +37,8 @@ module CHIP(clk,
     assign wData = (ctrlSignal[8])?{AddrNext}:wDataFin;
     assign mem_wen_D = ctrlSignal[5];
     assign mem_addr_D = MemAddr;
-    assign mem_wdata_D = rData2;
-    assign wDataFin = (ctrlSignal[4])?mem_rdata_D:MemAddr;
+    assign mem_wdata_D = {rData2[7:0],rData2[15:8],rData2[23:16],rData2[31:24]};
+    assign wDataFin = (ctrlSignal[4])?{mem_rdata_D[7:0],mem_rdata_D[15:8],mem_rdata_D[23:16],mem_rdata_D[31:24]}:MemAddr;
     assign mem_addr_I = PC;
     assign AddrNext = PC[31:0] + 32'd4;       // can modify to 30 bits if necessary
     assign AddrJalPre = PC + Imm;
@@ -67,7 +67,8 @@ module CHIP(clk,
                 .rData1(rData1),
                 .rData2(rData2),
                 .Reg_write(ctrlSignal[7]),
-                .clk(clk)
+                .clk(clk),
+                .rst_n(rst_n)
                 );
 
     ALU alu(.rd1(rData1),
@@ -109,12 +110,13 @@ module Reg_File( rs1,
                 rData1,
                 rData2,
                 Reg_write,
-                clk
+                clk,
+                rst_n
     );
 
     input [4:0] rs1,rs2,rd;
     input [31:0] wData;
-    input Reg_write,clk;
+    input Reg_write,clk,rst_n;
     output [31:0] rData1,rData2;
     reg [31:0] Rreg [0:31];
     reg [31:0] Wreg [0:31];
@@ -128,6 +130,11 @@ module Reg_File( rs1,
       if (Reg_write) Wreg[rd] = wData;
     end
     always @(posedge clk) begin
+        if (!rst_n) begin
+            for (i=0;i<32;i=i+1) begin
+                Wreg[i] <= 32'b0;
+            end
+        end
         Rreg[0] <=32'b0;
         for(i=1;i<32;i=i+1)begin
             Rreg[i] <= Wreg[i];
@@ -153,7 +160,7 @@ module ALU( rd1,
     assign orWire = rd1 | rd2;
     assign addWire = $signed(rd1) + $signed(rd2);
     assign subWire = $signed(rd1) - $signed(rd2);
-    assign sltWire = (subWire[31])?32'b1:32'b0; 
+    assign sltWire = (subWire[31]|Zero)?32'b1:32'b0; 
     assign Zero = ($signed(rd1) == $signed(rd2))?1'b1:1'b0;
     always @(*) begin
         case(ALU_Ctrl)
@@ -270,7 +277,7 @@ module ALU_Ctrl(ALUOp,
             6'b100010: ctrl = 4'b0110; // sub
             6'b011110: ctrl = 4'b0000; // and
             6'b011010: ctrl = 4'b0001; // or
-            6'b001010: ctrl = 4'b1000; // slt
+            6'b001010: ctrl = 4'b0111; // slt
             default: ctrl = 4'b0010;
         endcase
     end
