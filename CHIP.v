@@ -45,7 +45,7 @@ module CHIP(clk,
     // and bandz(BandZ,zero,ctrlSignal[2]);
     // or bandzorj(BandZorJ,BandZ,ctrlSignal[1]);
     // assign AddrSecStage = (BandZorJ == 1)?AddrJalPre:AddrNext;
-    assign AddrJalrPre = Imm + rData1;
+    assign AddrJalrPre = MemAddr;
     // assign AddrFin = (ctrlSignal[0] == 1)?AddrJalrPre:AddrSecStage;
     assign AddrFin = (ctrlSignal[0])?AddrJalrPre:((zero&ctrlSignal[2])|ctrlSignal[1])?AddrJalPre:AddrNext;
     // combinatial
@@ -142,7 +142,39 @@ module Reg_File( rs1,
     end
 
 endmodule
+// module Reg_File(clk,
+//                 rst_n,
+//                 rs1,
+//                 rs2,
+//                 rd,
+//                 rData1,
+//                 rData2,
+//                 wData,
+//                 Reg_write);
 
+//     input [4:0] rs1, rs2, rd;
+//     input clk, rst_n, Reg_write;
+//     input [31:0] wData;
+//     output [31:0] rData1, rData2;
+//     integer i;
+
+//     reg [31:0] RF [31:0];
+
+//     assign    rData1 = RF[rs1];
+//     assign    rData2 = RF[rs2];
+
+//     wire [31:0] dec = (Reg_write << rd);
+//     always @(posedge clk) begin
+//         if (!rst_n) begin
+//             for(i = 0; i < 32; i = i + 1) RF[i] <= 32'b0;
+//         end
+//         else begin
+//             RF[0] <= 32'b0;
+//             for(i = 1; i < 32; i = i + 1) RF[i] <= dec[i]? wData : RF[i];
+//         end
+//     end
+
+// endmodule
 // maybe is complete
 module ALU( rd1,
             rd2,
@@ -160,7 +192,7 @@ module ALU( rd1,
     assign orWire = rd1 | rd2;
     assign addWire = $signed(rd1) + $signed(rd2);
     assign subWire = $signed(rd1) - $signed(rd2);
-    assign sltWire = (subWire[31]|Zero)?32'b1:32'b0; 
+    assign sltWire = (subWire[31])?32'b1:32'b0; 
     assign Zero = ($signed(rd1) == $signed(rd2))?1'b1:1'b0;
     always @(*) begin
         case(ALU_Ctrl)
@@ -219,12 +251,12 @@ module CTRL(ins,
                         Jal = 1'b1;
                         Jin = 1'b1;
                         RegWrite = 1'b1;
-                        ALUSrc = 1'b1;
                         end
             7'b1100111: begin
                         Jalr = 1'b1;
                         Jin = 1'b1;
                         RegWrite = 1'b1;
+                        ALUSrc = 1'b1;
                         end
             7'b1100011: begin               // beq
                         ALUOp = ins[4:3];
