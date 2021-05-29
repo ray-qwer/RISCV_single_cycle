@@ -22,7 +22,7 @@ module CHIP(clk,
     // for mem_I
     output [31:0] mem_addr_I ;  // the fetching address of next instruction
     input  [31:0] mem_rdata_I;  // instruction reading from I-mem
-    wire ctrlSignal [0:8];
+    wire ctrlSignal [0:9];
     // 0: Jalr, 1: Jal, 2: Branch, 3: MemRead, 4:MemtoReg, 5: MemWrite
     // 6: ALUSrc 7: RegWrite, 8: Jin
     wire [1:0] ALUOp; 
@@ -32,6 +32,13 @@ module CHIP(clk,
     wire zero,BandZ,BandZorJ;
     reg [31:0] PC;
     reg [31:0] PC_next;
+// ========================================================= new ============================================ //
+    wire bne;
+    assign bne = mem_rdata_I[20] & ~zero & ctrlSignal[2];
+// =================================================== modify =============================================== //
+    assign AddrFin = (ctrlSignal[0])?AddrJalrPre:((zero&ctrlSignal[2])|ctrlSignal[1]|bne)?AddrJalPre:AddrNext;
+// ========================================================================================================== //
+
     // assign
     assign ALUData2 = (ctrlSignal[6])?Imm:rData2;
     assign wData = (ctrlSignal[8])?{AddrNext}:wDataFin;
@@ -42,12 +49,7 @@ module CHIP(clk,
     assign mem_addr_I = PC;
     assign AddrNext = PC[31:0] + 32'd4;       // can modify to 30 bits if necessary
     assign AddrJalPre = PC + Imm;
-    // and bandz(BandZ,zero,ctrlSignal[2]);
-    // or bandzorj(BandZorJ,BandZ,ctrlSignal[1]);
-    // assign AddrSecStage = (BandZorJ == 1)?AddrJalPre:AddrNext;
     assign AddrJalrPre = MemAddr;
-    // assign AddrFin = (ctrlSignal[0] == 1)?AddrJalrPre:AddrSecStage;
-    assign AddrFin = (ctrlSignal[0])?AddrJalrPre:((zero&ctrlSignal[2])|ctrlSignal[1])?AddrJalPre:AddrNext;
     // combinatial
     always @(*) begin
         PC_next = AddrFin;
@@ -97,7 +99,7 @@ module CHIP(clk,
                 .MemWrite(ctrlSignal[5]),
                 .ALUSrc(ctrlSignal[6]),
                 .RegWrite(ctrlSignal[7]),
-                .Jin(ctrlSignal[8])
+                .Jin(ctrlSignal[8]),
                 );
 endmodule
 
@@ -142,39 +144,8 @@ module Reg_File( rs1,
     end
 
 endmodule
-// module Reg_File(clk,
-//                 rst_n,
-//                 rs1,
-//                 rs2,
-//                 rd,
-//                 rData1,
-//                 rData2,
-//                 wData,
-//                 Reg_write);
 
-//     input [4:0] rs1, rs2, rd;
-//     input clk, rst_n, Reg_write;
-//     input [31:0] wData;
-//     output [31:0] rData1, rData2;
-//     integer i;
 
-//     reg [31:0] RF [31:0];
-
-//     assign    rData1 = RF[rs1];
-//     assign    rData2 = RF[rs2];
-
-//     wire [31:0] dec = (Reg_write << rd);
-//     always @(posedge clk) begin
-//         if (!rst_n) begin
-//             for(i = 0; i < 32; i = i + 1) RF[i] <= 32'b0;
-//         end
-//         else begin
-//             RF[0] <= 32'b0;
-//             for(i = 1; i < 32; i = i + 1) RF[i] <= dec[i]? wData : RF[i];
-//         end
-//     end
-
-// endmodule
 // maybe is complete
 module ALU( rd1,
             rd2,
@@ -187,20 +158,29 @@ module ALU( rd1,
     input [3:0] ALU_Ctrl;
     output Zero;
     output reg [31:0] out1;
-    wire [31:0] andWire, orWire, addWire, subWire, sltWire;
+    wire [31:0] andWire, orWire, addWire, subWire, sltWire,logicShiftLeftWire;
+    wire [31:0] logicShiftRightWire, arithShiftRightWire,xorWire;
     assign andWire = rd1 & rd2;
     assign orWire = rd1 | rd2;
     assign addWire = $signed(rd1) + $signed(rd2);
     assign subWire = $signed(rd1) - $signed(rd2);
     assign sltWire = (subWire[31])?32'b1:32'b0; 
+    assign logicShiftLeftWire = rd1 << rd2;
+    assign logicShiftRightWire = rd1 >> rd2;
+    assign arithShiftRightWire = rd1 >>> rd2;
+    assign xorWire = rd1 ^ rd2;
     assign Zero = ($signed(rd1) == $signed(rd2))?1'b1:1'b0;
     always @(*) begin
         case(ALU_Ctrl)
             4'b0000: out1 = andWire;
             4'b0001: out1 = orWire;
             4'b0010: out1 = addWire;
+            4'b0011: out1 = logicShiftLeftWire; // new
+            4'b0100: out1 = logicShiftRightWire; // new
+            4'b0101: out1 = arithShiftRightWire; // new
             4'b0110: out1 = subWire;
             4'b0111: out1 = sltWire;
+            4'b1000: out1 = xorWire; // new
             default: out1 = 32'b0;
         endcase
     end
@@ -230,10 +210,10 @@ module CTRL(ins,
     output reg [1:0] ALUOp;
     
     always @(*)begin
-        {Jal,Jalr,Branch,MemRead,MemtoReg,MemWrite,ALUSrc,RegWrite,Jin} = 9'b0;
+        {Jal,Jalr,Branch,MemRead,MemtoReg,MemWrite,ALUSrc,RegWrite,Jin,Itype} = 10'b0;
         ALUOp = 2'b0;
         case(ins) 
-            7'b0110011: begin
+            7'b0110011: begin                // R type
                         ALUOp = ins[4:3];
                         RegWrite = 1'b1;
                         end
@@ -247,20 +227,24 @@ module CTRL(ins,
                         ALUSrc = 1'b1;
                         RegWrite = 1'b1;
                         end
-            7'b1101111: begin
+            7'b1101111: begin               // jal
                         Jal = 1'b1;
                         Jin = 1'b1;
                         RegWrite = 1'b1;
                         end
-            7'b1100111: begin
+            7'b1100111: begin               // jalr
                         Jalr = 1'b1;
                         Jin = 1'b1;
                         RegWrite = 1'b1;
                         ALUSrc = 1'b1;
                         end
-            7'b1100011: begin               // beq
+            7'b1100011: begin               // beq & bne
                         ALUOp = ins[4:3];
                         Branch = 1'b1;
+                        end
+            7'b0010011: begin // I type
+                        ALUOp = ins[4:3];
+                        RegWrite = 1'b1;
                         end
         endcase
     end 
@@ -291,6 +275,9 @@ module ImmGen(  input_reg,
             7'b1101111: begin       // J type
                         output_reg = {{20{input_reg[31]}},{input_reg[19:12]},{input_reg[20]},{input_reg[30:21]},1'b0};
                         end
+            7'b0010011: begin
+                        output_reg = {20'b0,input_reg[11:0]};
+                        end
         endcase
     end
 endmodule
@@ -298,18 +285,26 @@ endmodule
 // need to check ALUOp
 module ALU_Ctrl(ALUOp,
                 ins,
-                ctrl
+                ctrl,
 );
     input [3:0] ins;
     input [1:0] ALUOp;
     output reg [3:0] ctrl;
     always @(*) begin
-        case({ins,ALUOp})
-            6'b000010: ctrl = 4'b0010; // add
-            6'b100010: ctrl = 4'b0110; // sub
-            6'b011110: ctrl = 4'b0000; // and
-            6'b011010: ctrl = 4'b0001; // or
-            6'b001010: ctrl = 4'b0111; // slt
+        case({ins[2:0],ALUOp})
+            5'b00010: begin
+                        if (ins[3]) ctrl = 4'b0110; //sub
+                        else ctrl = 4'b0010;        //add
+            end 
+            5'b11110: ctrl = 4'b0000;               // and
+            5'b11010: ctrl = 4'b0001;               // or
+            5'b01010: ctrl = 4'b0111;               // slt
+            5'b10010: ctrl = 4'b1000;               // xor
+            5'b10110: begin
+                        if (ins[3]) ctrl = 4'b0101; // srli
+                        else ctrl = 4'b0100;        // srai
+            end
+            5'b00110: ctrl = 4'b0011;               // slli
             default: ctrl = 4'b0010;
         endcase
     end
